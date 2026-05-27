@@ -1,49 +1,48 @@
 <?php
 class Presupuesto {
     private $conn;
-    private $table_name = "presupuestos";
+    // Cambiamos la tabla por la VISTA optimizada para las lecturas directas
+    private $view_name = "vista_visor_opus"; 
 
     public function __construct($db) {
         $this->conn = $db;
     }
 
-    // Trae las raíces (Capítulos) y calcula su dinero total
+    // Trae las raíces (Capítulos) y calcula su dinero total usando la vista
     public function obtenerRaices() {
-        $query = "SELECT * FROM " . $this->table_name . " WHERE parent_id IS NULL ORDER BY id ASC";
+        $query = "SELECT * FROM " . $this->view_name . " WHERE parent_id IS NULL ORDER BY id ASC";
         $stmt = $this->conn->prepare($query);
         $stmt->execute();
-        $raices = $stmt->fetchAll();
+        $raices = $stmt->fetchAll(PDO::FETCH_ASSOC); // Forzamos formato asociativo limpio
 
-        // Magia: Calcular el total acumulado para cada capítulo
+        // Calcular el total acumulado para cada capítulo
         foreach ($raices as &$raiz) {
             $raiz['importe_total'] = $this->calcularSumaArbol($raiz['id']);
         }
         return $raices;
     }
 
-    // Trae los desgloses y calcula si tienen más dinero adentro
+    // Trae los desgloses de forma ultra rápida gracias al índice parent_id
     public function obtenerHijos($parent_id) {
-        $query = "SELECT * FROM " . $this->table_name . " WHERE parent_id = :parent_id ORDER BY id ASC";
+        $query = "SELECT * FROM " . $this->view_name . " WHERE parent_id = :parent_id ORDER BY id ASC";
         $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":parent_id", $parent_id);
+        $stmt->bindParam(":parent_id", $parent_id, PDO::PARAM_INT);
         $stmt->execute();
-        $hijos = $stmt->fetchAll();
+        $hijos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         foreach ($hijos as &$hijo) {
-            if ($hijo['tipo'] === 'Concepto' || $hijo['tipo'] === 'Insumo') {
-                // Si es el nivel final, su total es Cantidad x Precio
-                $hijo['importe_total'] = $hijo['cantidad'] * $hijo['precio_unitario'];
-            } else {
-                // Si es un Subcapítulo, suma lo de adentro
+            // OPTIMIZACIÓN: Si es Concepto o Insumo, ya NO hacemos la multiplicación en PHP.
+            // La vista 'vista_visor_opus' ya trae el campo 'importe_total' calculado desde la DB.
+            if ($hijo['tipo'] !== 'Concepto' && $hijo['tipo'] !== 'Insumo') {
+                // Si es un Subcapítulo, ejecuta la suma recursiva hacia abajo
                 $hijo['importe_total'] = $this->calcularSumaArbol($hijo['id']);
             }
         }
         return $hijos;
     }
 
-    // Función Recursiva que suma todo el dinero de las ramas inferiores en milisegundos
+    // Función Recursiva (Ahora vuela gracias a que tu DB ya cuenta con el índice idx_parent_id)
     private function calcularSumaArbol($id) {
-        // Usamos Common Table Expressions (CTE) soportado por XAMPP/MySQL/SQLServer
         $query = "WITH RECURSIVE jerarquia AS (
                     SELECT id, cantidad, precio_unitario FROM presupuestos WHERE id = :id
                     UNION ALL
@@ -53,12 +52,12 @@ class Presupuesto {
                   SELECT SUM(cantidad * precio_unitario) as gran_total FROM jerarquia";
         try {
             $stmt = $this->conn->prepare($query);
-            $stmt->bindParam(':id', $id);
+            $stmt->bindParam(':id', $id, PDO::PARAM_INT);
             $stmt->execute();
-            $row = $stmt->fetch();
-            return $row['gran_total'] ? $row['gran_total'] : 0;
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $row['gran_total'] ? (float)$row['gran_total'] : 0.00;
         } catch (Exception $e) {
-            return 0; // Fallback de seguridad
+            return 0.00; // Fallback de seguridad
         }
     }
 }

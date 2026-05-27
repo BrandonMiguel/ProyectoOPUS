@@ -26,9 +26,14 @@ class PresupuestoController {
             $db = (new Database())->getConnection();
             $model = new Presupuesto($db);
             $hijos = $model->obtenerHijos($parent_id);
+            
+            // BUENA PRÁCTICA: Enviamos la cabecera correcta para que el navegador sepa que es JSON nativo
+            header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['status' => 'ok', 'data' => $hijos]);
         } catch (Exception $e) {
+            header('Content-Type: application/json; charset=utf-8');
             echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
         }
     }
-}
+} // <- Corregido el error de sintaxis que tenías aquí al cerrar la clase
+?>
